@@ -2,7 +2,7 @@
   "name": "alpencode",
   "displayName": "AlpenCode",
   "description": "Swiss German Voice-to-Code Dictation",
-  "version": "0.0.3",
+  "version": "0.0.5",
   "icon": "cow.png",
   "publisher": "Bischoff-Ventures",
   "repository": {

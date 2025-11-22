@@ -10,6 +10,7 @@ import re
 import sys
 import platform
 import json
+import subprocess
 from pathlib import Path
 import threading
 try:
@@ -32,6 +33,84 @@ p = pyaudio.PyAudio()
 device_index = None # Wird automatisch gewählt oder per Config gesetzt
 silence_threshold = 5 # Default
 audio_lock = threading.Lock()
+original_volume = None
+
+def get_current_volume():
+    system = platform.system()
+    try:
+        if system == "Linux":
+            # Versuche zuerst amixer
+            result = subprocess.run(['amixer', 'get', 'Master'], capture_output=True, text=True)
+            if result.returncode == 0:
+                match = re.search(r'\[(\d+)%\]', result.stdout)
+                if match:
+                    return int(match.group(1))
+            
+            # Fallback zu pactl
+            result = subprocess.run(['pactl', 'get-sink-volume', '@DEFAULT_SINK@'], 
+                                  capture_output=True, text=True)
+            if result.returncode == 0:
+                match = re.search(r'/  (\d+)%', result.stdout)
+                if match:
+                    return int(match.group(1))
+        elif system == "Windows":
+            try:
+                from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+                devices = AudioUtilities.GetSpeakers()
+                interface = devices.Activate(IAudioEndpointVolume._iid_, 0, None)
+                volume = interface.QueryInterface(IAudioEndpointVolume)
+                return int(volume.GetMasterVolumeLevelScalar() * 100)
+            except ImportError:
+                pass
+    except:
+        pass
+    return None
+
+def set_volume(volume_percent):
+    system = platform.system()
+    try:
+        if system == "Linux":
+            # Versuche zuerst amixer (ALSA), da pactl (Pulse) manchmal Crashes verursacht
+            result = subprocess.run(['amixer', 'set', 'Master', f'{volume_percent}%'], capture_output=True)
+            if result.returncode == 0:
+                return
+            
+            # Fallback zu pactl
+            subprocess.run(['pactl', 'set-sink-volume', '@DEFAULT_SINK@', f'{volume_percent}%'], 
+                         capture_output=True)
+        elif system == "Windows":
+            try:
+                from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+                devices = AudioUtilities.GetSpeakers()
+                interface = devices.Activate(IAudioEndpointVolume._iid_, 0, None)
+                volume = interface.QueryInterface(IAudioEndpointVolume)
+                volume.SetMasterVolumeLevelScalar(volume_percent / 100.0, None)
+            except ImportError:
+                pass
+    except:
+        pass
+
+def mute_system():
+    try:
+        global original_volume
+        if original_volume is None:
+            original_volume = get_current_volume()
+            if original_volume is None:
+                original_volume = 50
+        set_volume(0)
+    except Exception as e:
+        print(json.dumps({"type": "error", "message": f"Mute Error: {e}"}))
+        sys.stdout.flush()
+
+def unmute_system():
+    try:
+        global original_volume
+        if original_volume is not None:
+            set_volume(original_volume)
+            original_volume = None
+    except Exception as e:
+        print(json.dumps({"type": "error", "message": f"Unmute Error: {e}"}))
+        sys.stdout.flush()
 
 def get_config_dir():
     if platform.system() == "Windows":
@@ -207,6 +286,7 @@ def main():
             if command == "start":
                 if not recording:
                     recording = True
+                    mute_system()
                     monitoring = False
                     frames = []
                     try:
@@ -242,6 +322,7 @@ def main():
             elif command == "stop":
                 if recording:
                     recording = False
+                    unmute_system()
                     with audio_lock:
                         if stream:
                             try:
