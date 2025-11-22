@@ -92,15 +92,18 @@ def get_current_volume():
     system = platform.system()
     try:
         if system == "Linux":
+            # Versuche zuerst amixer
+            result = subprocess.run(['amixer', 'get', 'Master'], capture_output=True, text=True)
+            if result.returncode == 0:
+                match = re.search(r'\[(\d+)%\]', result.stdout)
+                if match:
+                    return int(match.group(1))
+            
+            # Fallback zu pactl
             result = subprocess.run(['pactl', 'get-sink-volume', '@DEFAULT_SINK@'], 
                                   capture_output=True, text=True)
             if result.returncode == 0:
                 match = re.search(r'/  (\d+)%', result.stdout)
-                if match:
-                    return int(match.group(1))
-            result = subprocess.run(['amixer', 'get', 'Master'], capture_output=True, text=True)
-            if result.returncode == 0:
-                match = re.search(r'\[(\d+)%\]', result.stdout)
                 if match:
                     return int(match.group(1))
         elif system == "Windows":
@@ -120,11 +123,14 @@ def set_volume(volume_percent):
     system = platform.system()
     try:
         if system == "Linux":
-            result = subprocess.run(['pactl', 'set-sink-volume', '@DEFAULT_SINK@', f'{volume_percent}%'], 
-                         capture_output=True)
+            # Versuche zuerst amixer (ALSA), da pactl (Pulse) manchmal Crashes verursacht
+            result = subprocess.run(['amixer', 'set', 'Master', f'{volume_percent}%'], capture_output=True)
             if result.returncode == 0:
                 return
-            subprocess.run(['amixer', 'set', 'Master', f'{volume_percent}%'], capture_output=True)
+            
+            # Fallback zu pactl
+            subprocess.run(['pactl', 'set-sink-volume', '@DEFAULT_SINK@', f'{volume_percent}%'], 
+                         capture_output=True)
         elif system == "Windows":
             try:
                 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
@@ -138,18 +144,24 @@ def set_volume(volume_percent):
         pass
 
 def mute_system():
-    global original_volume
-    if original_volume is None:
-        original_volume = get_current_volume()
+    try:
+        global original_volume
         if original_volume is None:
-            original_volume = 50
-    set_volume(0)
+            original_volume = get_current_volume()
+            if original_volume is None:
+                original_volume = 50
+        set_volume(0)
+    except Exception as e:
+        print(f"Warnung: Konnte System nicht stummschalten: {e}")
 
 def unmute_system():
-    global original_volume
-    if original_volume is not None:
-        set_volume(original_volume)
-        original_volume = None
+    try:
+        global original_volume
+        if original_volume is not None:
+            set_volume(original_volume)
+            original_volume = None
+    except Exception as e:
+        print(f"Warnung: Konnte Lautstärke nicht wiederherstellen: {e}")
 
 def type_text_via_clipboard(text):
     try:
@@ -332,21 +344,33 @@ def main():
     send_notification("AlpenCode", f"Bereit! Schwelle: {silence_threshold}")
     
     frames = []
-    recording = False
+    recording_state = False # True wenn Taste gedrückt
     stream = None
-
+    
     warmup_frames = int(RATE / CHUNK * 0.2)  # 200ms
     warmup_counter = 0
 
     def on_press(key):
-        nonlocal recording, warmup_counter, frames, stream
-        if key == keyboard.Key.f12 and not recording:
+        nonlocal recording_state
+        if key == keyboard.Key.f12 and not recording_state:
+            recording_state = True
+
+    def on_release(key):
+        nonlocal recording_state
+        if key == keyboard.Key.f12 and recording_state:
+            recording_state = False
+
+    listener = keyboard.Listener(on_press=on_press, on_release=on_release)
+    listener.start()
+
+    while True:
+        # State Machine im Main Thread
+        if recording_state and stream is None:
+            # Start Recording
             mute_system()
             send_notification("🎙️", "Aufnahme...")
             frames = []
-            recording = True
             warmup_counter = 0
-            
             try:
                 stream = p.open(format=pyaudio.paInt16, 
                                 channels=1, 
@@ -356,28 +380,23 @@ def main():
                                 frames_per_buffer=CHUNK)
             except Exception as e:
                 print(f"Fehler beim Öffnen des Streams: {e}")
-                recording = False
+                recording_state = False
                 unmute_system()
-
-    def on_release(key):
-        nonlocal recording, stream
-        if key == keyboard.Key.f12 and recording:
+        
+        elif not recording_state and stream is not None:
+            # Stop Recording
             send_notification("⏳", "Prüfe...")
-            recording = False
-            if stream:
-                try:
-                    stream.stop_stream()
-                    stream.close()
-                except:
-                    pass
-                stream = None
+            try:
+                stream.stop_stream()
+                stream.close()
+            except:
+                pass
+            stream = None
             unmute_system()
-
-    listener = keyboard.Listener(on_press=on_press, on_release=on_release)
-    listener.start()
-
-    while True:
-        if recording and stream:
+            
+            # Process Audio (unten weiter)
+        
+        if stream:
             try:
                 data = stream.read(CHUNK, exception_on_overflow=False)
                 warmup_counter += 1

@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AlpenCode Settings</title>
+    <style>
+        body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); background-color: var(--vscode-editor-background); padding: 20px; }
+        h2 { border-bottom: 1px solid var(--vscode-panel-border); padding-bottom: 10px; }
+        .section { margin-bottom: 30px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        select, input[type="text"], button { 
+            background: var(--vscode-input-background); 
+            color: var(--vscode-input-foreground); 
+            border: 1px solid var(--vscode-input-border); 
+            padding: 8px; 
+            width: 100%; 
+            margin-bottom: 10px; 
+            box-sizing: border-box;
+        }
+        button { 
+            background: var(--vscode-button-background); 
+            color: var(--vscode-button-foreground); 
+            cursor: pointer; 
+            font-weight: bold;
+        }
+        button:hover { background: var(--vscode-button-hoverBackground); }
+        .status { margin-top: 10px; font-style: italic; }
+        .meter { height: 20px; background: #333; border-radius: 4px; overflow: hidden; margin-top: 5px; position: relative; margin-bottom: 10px; }
+        .meter-fill { height: 100%; background: #4CAF50; width: 0%; transition: width 0.1s; }
+        .threshold-marker { position: absolute; top: 0; bottom: 0; width: 2px; background: red; z-index: 10; }
+        
+        /* Toggle Switch Styling */
+        .switch-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: var(--vscode-editor-inactiveSelectionBackground);
+            padding: 12px 15px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            border: 1px solid var(--vscode-widget-border);
+        }
+        
+        .switch-info {
+            flex: 1;
+            padding-right: 20px;
+        }
+        
+        .switch-label {
+            font-weight: bold;
+            font-size: 1.1em;
+            display: block;
+            margin-bottom: 4px;
+        }
+        
+        .switch-desc {
+            font-size: 0.85em;
+            opacity: 0.8;
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 46px;
+            height: 24px;
+            flex-shrink: 0;
+        }
+
+        .switch input { 
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: var(--vscode-scrollbarSlider-background);
+            transition: .4s;
+            border-radius: 34px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: var(--vscode-button-background);
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(22px);
+        }
+    </style>
+</head>
+<body>
+    <h2>🇨🇭 AlpenCode Settings</h2>
+
+    <div class="section">
+        <label>General Settings</label>
+        <div class="switch-container">
+            <div class="switch-info">
+                <span class="switch-label">Auto Enter</span>
+                <span class="switch-desc">Insert a newline (Enter) automatically after each dictation.</span>
+            </div>
+            <label class="switch">
+                <input type="checkbox" id="autoEnter">
+                <span class="slider"></span>
+            </label>
+        </div>
+    </div>
+
+    <div class="section">
+        <label>Microphone Selection</label>
+        <select id="deviceSelect">
+            <option value="">Loading devices...</option>
+        </select>
+        <button id="refreshDevices">🔄 Refresh Devices</button>
+    </div>
+
+    <div class="section">
+        <label>Calibration & Test</label>
+        <p>Current Threshold: <span id="thresholdValue">5</span></p>
+        <button id="startCalibration">🎤 Start Calibration (3s)</button>
+        
+        <label style="margin-top: 15px; font-size: 0.9em;">Standard Input Level (vs Threshold)</label>
+        <div class="meter">
+            <div id="levelMeter" class="meter-fill"></div>
+            <div id="thresholdMarker" class="threshold-marker" style="left: 10%"></div>
+        </div>
+
+        <label style="margin-top: 15px; font-size: 0.9em;">Amplified Input (High Sensitivity Check)</label>
+        <div class="meter">
+            <div id="ampLevelMeter" class="meter-fill" style="background: #2196F3;"></div>
+        </div>
+        
+        <p class="status" id="calibStatus">Live Input Monitor Active</p>
+    </div>
+
+    <div class="section" style="border-bottom: none;">
+        <label>Troubleshooting</label>
+        <button id="resetEnv" style="background: #d32f2f;">⚠️ Reset Python Environment</button>
+        <p style="font-size: 0.8em; color: var(--vscode-descriptionForeground);">Use this if the extension is not working correctly. It will delete the virtual environment and reinstall it on next start.</p>
+    </div>
+
+    <script>
+        const vscode = acquireVsCodeApi();
+        let currentThreshold = 5;
+        
+        function updateThresholdMarker(val) {
+            currentThreshold = val;
+            document.getElementById('thresholdValue').innerText = val;
+            // Map 0-50 (typical range) to 0-100%
+            const pct = Math.min(100, val * 2);
+            document.getElementById('thresholdMarker').style.left = pct + '%';
+        }
+
+        // Handle messages from extension
+        window.addEventListener('message', event => {
+            const message = event.data;
+            
+            if (message.type === 'init_settings') {
+                document.getElementById('autoEnter').checked = message.autoEnter;
+            } else if (message.type === 'devices') {
+                const select = document.getElementById('deviceSelect');
+                select.innerHTML = '';
+                message.devices.forEach(d => {
+                    const option = document.createElement('option');
+                    option.value = d.index;
+                    option.text = d.name;
+                    select.appendChild(option);
+                });
+                // Start monitoring when devices are loaded
+                vscode.postMessage({ command: 'start_monitor' });
+            } else if (message.type === 'calibration_level') {
+                const val = message.value;
+                
+                // Standard Meter
+                const fill = document.getElementById('levelMeter');
+                fill.style.width = Math.min(100, val * 2) + '%';
+                
+                // Amplified Meter (x10 sensitivity)
+                const ampFill = document.getElementById('ampLevelMeter');
+                ampFill.style.width = Math.min(100, val * 20) + '%';
+                
+            } else if (message.type === 'calibration_result') {
+                document.getElementById('calibStatus').innerText = `Result: RMS ${message.rms} - Suggested: ${message.suggestion}`;
+                updateThresholdMarker(message.suggestion);
+            }
+        });
+
+        // UI Actions
+        document.getElementById('autoEnter').addEventListener('change', (e) => {
+            vscode.postMessage({ command: 'toggle_auto_enter', value: e.target.checked });
+        });
+
+        document.getElementById('refreshDevices').addEventListener('click', () => {
+            vscode.postMessage({ command: 'list_devices' });
+        });
+
+        document.getElementById('deviceSelect').addEventListener('change', (e) => {
+            vscode.postMessage({ command: 'set_device', index: e.target.value });
+            // Restart monitor to pick up new device
+            setTimeout(() => vscode.postMessage({ command: 'start_monitor' }), 500);
+        });
+
+        document.getElementById('startCalibration').addEventListener('click', () => {
+            document.getElementById('calibStatus').innerText = "Listening...";
+            vscode.postMessage({ command: 'calibrate' });
+        });
+
+        document.getElementById('resetEnv').addEventListener('click', () => {
+            vscode.postMessage({ command: 'reset_env' });
+        });
+
+        // Initial load
+        vscode.postMessage({ command: 'list_devices' });
+    </script>
+</body>
+</html>
