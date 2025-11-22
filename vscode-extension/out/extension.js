@@ -60,7 +60,7 @@ function activate(context) {
         });
         let settingsCommand = vscode.commands.registerCommand('alpencode.settings', () => {
             const panel = vscode.window.createWebviewPanel('alpencodeSettings', 'AlpenCode Settings', vscode.ViewColumn.One, { enableScripts: true });
-            const htmlPath = path.join(context.extensionPath, 'src', 'webview', 'settings.html');
+            const htmlPath = path.join(context.extensionPath, 'media', 'settings.html');
             panel.webview.html = fs.readFileSync(htmlPath, 'utf8');
             // Send initial settings
             const config = vscode.workspace.getConfiguration('alpencode');

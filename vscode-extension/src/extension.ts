@@ -57,7 +57,7 @@ export async function activate(context: vscode.ExtensionContext) {
             { enableScripts: true }
         );
 
-        const htmlPath = path.join(context.extensionPath, 'src', 'webview', 'settings.html');
+        const htmlPath = path.join(context.extensionPath, 'media', 'settings.html');
         panel.webview.html = fs.readFileSync(htmlPath, 'utf8');
 
         // Send initial settings
