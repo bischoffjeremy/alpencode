@@ -220,10 +220,14 @@ publish_extension() {
 push_changes() {
     log_info "Pushing changes to git..."
 
-    git push origin main
+    # Get current branch name
+    CURRENT_BRANCH=$(git branch --show-current)
+    log_info "Current branch: $CURRENT_BRANCH"
+
+    git push origin "$CURRENT_BRANCH"
     git push origin --tags
 
-    log_success "Changes pushed to git"
+    log_success "Changes pushed to git (branch: $CURRENT_BRANCH)"
 }
 
 # Main script
