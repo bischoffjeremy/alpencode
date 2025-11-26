@@ -70,12 +70,10 @@ def set_volume(volume_percent):
     system = platform.system()
     try:
         if system == "Linux":
-            # Versuche zuerst amixer (ALSA), da pactl (Pulse) manchmal Crashes verursacht
             result = subprocess.run(['amixer', 'set', 'Master', f'{volume_percent}%'], capture_output=True)
             if result.returncode == 0:
                 return
             
-            # Fallback zu pactl
             subprocess.run(['pactl', 'set-sink-volume', '@DEFAULT_SINK@', f'{volume_percent}%'], 
                          capture_output=True)
         elif system == "Windows":
@@ -165,7 +163,6 @@ def process_audio(audio_data, save_folder, pipe):
     if np.isnan(rms):
         return
     
-    # Debug Output für Extension
     print(json.dumps({"type": "level", "value": int(rms), "threshold": silence_threshold}))
     sys.stdout.flush()
 
@@ -205,7 +202,6 @@ def process_audio(audio_data, save_folder, pipe):
             text = text.replace(wrong, right)
 
         if text and len(text) > 1:
-            # WICHTIG: Output für VS Code Extension
             print(json.dumps({"type": "transcription", "text": text}))
             sys.stdout.flush()
 
@@ -274,7 +270,6 @@ def main():
         sys.stdout.flush()
         return
 
-    # Main Loop: Liest Befehle von stdin (von VS Code Extension)
     while True:
         try:
             line = sys.stdin.readline()
@@ -297,7 +292,6 @@ def main():
                                     stream.close()
                                 except: pass
                             
-                            # Reload config to get latest device
                             config = load_config()
                             device_index = config.get('device_index')
                             
@@ -311,7 +305,6 @@ def main():
                         print(json.dumps({"type": "status", "message": "Recording started"}))
                         sys.stdout.flush()
                         
-                        # Start Audio Processing Thread
                         threading.Thread(target=record_loop, daemon=True).start()
                         
                     except Exception as e:
@@ -355,7 +348,6 @@ def main():
                             config = load_config()
                             device_index = config.get('device_index')
                             
-                            # Debug: Log welche Device geöffnet wird
                             dev_name = "Default"
                             try:
                                 if device_index is not None:
@@ -389,7 +381,6 @@ def main():
                         stream = None
 
             elif command == "list_devices":
-                # Nicht neu initialisieren von PyAudio um PulseAudio Abstürze zu vermeiden
                 if not recording and not monitoring:
                     devices = []
                     try:
@@ -413,7 +404,6 @@ def main():
                     save_config(config)
                     device_index = idx
                     
-                    # Gerätename zur Bestätigung abrufen
                     dev_name = "Unknown"
                     try:
                         info = p.get_device_info_by_index(idx)
@@ -423,7 +413,6 @@ def main():
                     print(json.dumps({"type": "status", "message": f"Gerät {idx} ausgewählt: {dev_name}"}))
                     sys.stdout.flush()
                     
-                    # Monitor neu starten wenn aktiv
                     if monitoring:
                         monitoring = False
                         with audio_lock:
@@ -434,7 +423,6 @@ def main():
                                 except: pass
                             stream = None
                         time.sleep(0.1)
-                        # Frontend sollte es neu starten
                         
                 except Exception as e:
                     print(json.dumps({"type": "error", "message": f"Set Device Error: {e}"}))
@@ -445,7 +433,6 @@ def main():
                     print(json.dumps({"type": "status", "message": "Kalibriere..."}))
                     sys.stdout.flush()
                     
-                    # Konfiguration neu laden
                     config = load_config()
                     device_index = config.get('device_index')
                     
@@ -453,11 +440,9 @@ def main():
                                     input_device_index=device_index, frames_per_buffer=CHUNK)
                     
                     calib_frames = []
-                    # 3 Sekunden aufnehmen
                     for _ in range(0, int(RATE / CHUNK * 3)):
                         data = calib_stream.read(CHUNK, exception_on_overflow=False)
                         calib_frames.append(data)
-                        # Optional: Live-Pegel senden
                         audio_chunk = np.frombuffer(data, dtype=np.int16)
                         rms_chunk = np.sqrt(np.mean(audio_chunk.astype(float)**2)) / 32768 * 100
                         if not np.isnan(rms_chunk):
@@ -506,7 +491,6 @@ def main():
                 if PYAUTOGUI_AVAILABLE:
                     try:
                         pyautogui.press('enter')
-                        # print(json.dumps({"type": "status", "message": "Pressed Enter"}))
                     except Exception as e:
                         print(json.dumps({"type": "error", "message": f"Key Error: {e}"}))
                 else:

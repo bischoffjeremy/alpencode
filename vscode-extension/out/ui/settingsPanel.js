@@ -10,13 +10,12 @@ class SettingsPanel {
         this._extensionPath = extensionPath;
         this._backend = backend;
         this._panel.webview.html = this._getHtmlForWebview();
-        // BEREINIGTES MESSAGE HANDLING
         this._panel.webview.onDidReceiveMessage(message => {
             switch (message.command) {
                 case 'refreshDevices':
                     this._backend.send('list_devices');
                     break;
-                case 'get_config': // Wichtig: Exakt so wie in Python erwartet
+                case 'get_config':
                     this._backend.send('get_config');
                     break;
                 case 'startMonitor':
@@ -26,11 +25,15 @@ class SettingsPanel {
                     this._backend.send('stop_monitor');
                     break;
                 case 'setConfigVal':
-                    // ALLE Einstellungen laufen jetzt hierüber
-                    // Python kümmert sich um die Logik (z.B. Device Switch)
                     this._backend.send(`set_config_val ${message.key} ${message.value}`);
-                    // Config neu laden um UI zu aktualisieren
                     setTimeout(() => this._backend.send('get_config'), 100);
+                    break;
+                case 'resetInstall':
+                    // Forward to the extension command which handles full install reset (venv + caches + config)
+                    vscode.commands.executeCommand('alpencode.resetInstall');
+                    break;
+                case 'uninstall':
+                    vscode.commands.executeCommand('alpencode.uninstall');
                     break;
             }
         });

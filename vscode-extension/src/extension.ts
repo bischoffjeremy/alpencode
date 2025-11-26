@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { ensurePythonEnvironment } from './installer';
+import { ensurePythonEnvironment, resetInstallation, uninstallAlpenCode } from './installer';
 import { PythonBackendManager } from './manager';
 import { StatusBarManager } from './ui/statusBar';
 import { SettingsPanel } from './ui/settingsPanel'; // WICHTIG!
@@ -9,14 +9,16 @@ import { SettingsPanel } from './ui/settingsPanel'; // WICHTIG!
 let backend: PythonBackendManager;
 let statusBar: StatusBarManager;
 let outputChannel: vscode.OutputChannel;
+let extensionContext: vscode.ExtensionContext | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
+    extensionContext = context;
     outputChannel = vscode.window.createOutputChannel("AlpenCode");
     statusBar = new StatusBarManager();
-    
+
     // Backend Init
     backend = new PythonBackendManager(outputChannel, handleBackendMessage);
-    
+
     // Environment Check
     const pythonPath = await ensurePythonEnvironment(context, outputChannel);
     if (pythonPath) {
@@ -37,7 +39,7 @@ function registerCommands(context: vscode.ExtensionContext) {
 
         vscode.commands.registerCommand('alpencode.stop', () => {
             backend.send('stop');
-            statusBar.setProcessing(); 
+            statusBar.setProcessing();
         }),
 
         vscode.commands.registerCommand('alpencode.toggle', () => {
@@ -69,22 +71,75 @@ function registerCommands(context: vscode.ExtensionContext) {
                 "Delete AlpenCode Python environment? It will reinstall next time.",
                 "Yes, Delete", "Cancel"
             );
-            
+
             if (choice === "Yes, Delete") {
                 if (backend.isRunning()) {
                     backend.stop();
                     statusBar.setReady();
                 }
-                const venvPath = path.join(context.extensionPath, 'venv');
                 try {
-                    if (fs.existsSync(venvPath)) {
-                        fs.rmSync(venvPath, { recursive: true, force: true });
+                    const uninstalled = await uninstallAlpenCode(context, outputChannel);
+                    if (uninstalled) {
+                        outputChannel.appendLine('Uninstalled environment; now reinstalling...');
+                        const pythonPath = await ensurePythonEnvironment(context, outputChannel);
+                        if (pythonPath) {
+                            backend.start(pythonPath, context.extensionPath);
+                        }
+                        const reload = await vscode.window.showInformationMessage('Deleted. Reload window?', 'Reload');
+                        if (reload === 'Reload') vscode.commands.executeCommand('workbench.action.reloadWindow');
                     }
-                    const reload = await vscode.window.showInformationMessage("Deleted. Reload window?", "Reload");
-                    if (reload === "Reload") vscode.commands.executeCommand('workbench.action.reloadWindow');
                 } catch (e) {
                     vscode.window.showErrorMessage(`Error: ${e}`);
                 }
+            }
+        })
+        ,
+        vscode.commands.registerCommand('alpencode.resetInstall', async () => {
+            // Reset = Uninstall + Install
+            if (backend.isRunning()) {
+                backend.stop();
+                statusBar.setReady();
+            }
+            const confirm = await vscode.window.showWarningMessage(
+                'Reset installation? This will remove venv, models, settings & recordings and reinstall everything.',
+                'Reset', 'Cancel'
+            );
+            if (confirm !== 'Reset') return;
+            try {
+                const uninstalled = await uninstallAlpenCode(context, outputChannel);
+                if (!uninstalled) {
+                    vscode.window.showErrorMessage('Reset cancelled or uninstall failed.');
+                    return;
+                }
+                outputChannel.appendLine('Uninstall successful, starting reinstall...');
+                const pythonPath = await ensurePythonEnvironment(context, outputChannel);
+                if (pythonPath) {
+                    backend.start(pythonPath, context.extensionPath);
+                    const reload = await vscode.window.showInformationMessage('AlpenCode reinstalled successfully. Reload window?', 'Reload');
+                    if (reload === 'Reload') vscode.commands.executeCommand('workbench.action.reloadWindow');
+                } else {
+                    vscode.window.showErrorMessage('Re-installation failed. See output for details.');
+                }
+            } catch (e) {
+                vscode.window.showErrorMessage(`Reset failed: ${e}`);
+            }
+        })
+        ,
+        vscode.commands.registerCommand('alpencode.uninstall', async () => {
+            if (backend.isRunning()) {
+                backend.stop();
+                statusBar.setReady();
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+
+            try {
+                const res = await uninstallAlpenCode(context, outputChannel);
+                if (res) {
+                    const reload = await vscode.window.showInformationMessage('AlpenCode Uninstall complete. Reload window?', 'Reload');
+                    if (reload === 'Reload') vscode.commands.executeCommand('workbench.action.reloadWindow');
+                }
+            } catch (e) {
+                vscode.window.showErrorMessage(`Uninstall failed: ${e}`);
             }
         })
     );
@@ -102,6 +157,34 @@ function handleBackendMessage(msg: any) {
             outputChannel.appendLine("Backend ready.");
             break;
 
+        case 'backend_exited':
+            outputChannel.appendLine(`Backend exited with code ${msg.code}`);
+            statusBar.setError('Backend stopped');
+            vscode.window.showErrorMessage(
+                `AlpenCode backend exited (code: ${msg.code}). Check 'AlpenCode' output for details.`,
+                'Restart backend', 'Open Logs'
+            ).then(selection => {
+                if (selection === 'Restart backend') {
+                    (async () => {
+                        if (!extensionContext) {
+                            vscode.window.showErrorMessage('Extension context not available. Cannot restart backend.');
+                            return;
+                        }
+                        const pythonPath = await ensurePythonEnvironment(extensionContext, outputChannel).catch(() => undefined) as string | undefined;
+                        // If ensurePythonEnvironment returns a path, restart
+                        if (pythonPath) {
+                            backend.start(pythonPath, extensionContext.extensionPath);
+                            statusBar.setReady();
+                        } else {
+                            vscode.window.showErrorMessage('Could not find Python environment. Try running Reset Environment.');
+                        }
+                    })();
+                } else if (selection === 'Open Logs') {
+                    outputChannel.show();
+                }
+            });
+            break;
+
         case 'status':
             outputChannel.appendLine(`Status: ${msg.message}`);
             break;
@@ -113,7 +196,7 @@ function handleBackendMessage(msg: any) {
 
         case 'error':
             vscode.window.showErrorMessage(`AlpenCode Error: ${msg.message}`);
-            statusBar.setReady(); 
+            statusBar.setReady();
             break;
 
         // --- Settings Panel Kommunikation ---
@@ -128,10 +211,33 @@ function handleBackendMessage(msg: any) {
                 SettingsPanel.currentPanel.sendData('calibration_level', msg.value);
             }
             break;
+        case 'backend_not_running':
+            // When the manager can't send, show a one-time helper to the user
+            vscode.window.showWarningMessage('AlpenCode backend is not running. Would you like to restart it?', 'Restart', 'Open Logs')
+                .then(selection => {
+                    if (selection === 'Restart') {
+                        (async () => {
+                            if (!extensionContext) {
+                                vscode.window.showErrorMessage('Extension context is missing.');
+                                return;
+                            }
+                            const pythonPath = await ensurePythonEnvironment(extensionContext, outputChannel).catch(() => undefined) as string | undefined;
+                            if (pythonPath) {
+                                backend.start(pythonPath, extensionContext.extensionPath);
+                                statusBar.setReady();
+                            } else {
+                                vscode.window.showErrorMessage('Could not start Python environment. Use Reset Environment to reinstall.');
+                            }
+                        })();
+                    } else if (selection === 'Open Logs') {
+                        outputChannel.show();
+                    }
+                });
+            break;
 
         case 'calibration_result':
             vscode.window.showInformationMessage(
-                `Noise Level: ${msg.rms}. Suggested Threshold: ${msg.suggestion}`, 
+                `Noise Level: ${msg.rms}. Suggested Threshold: ${msg.suggestion}`,
                 "Apply Suggestion"
             ).then(selection => {
                 if (selection === "Apply Suggestion") {
@@ -139,14 +245,14 @@ function handleBackendMessage(msg: any) {
                     vscode.window.showInformationMessage(`Threshold set to ${msg.suggestion}`);
                 }
             });
-            
+
             if (SettingsPanel.currentPanel) {
                 SettingsPanel.currentPanel.sendData('calibration_result', msg);
             }
             break;
         case 'config_info':
             if (SettingsPanel.currentPanel) {
-                SettingsPanel.currentPanel.sendData('init_settings', { 
+                SettingsPanel.currentPanel.sendData('init_settings', {
                     threshold: msg.threshold,
                     device: msg.device,
                     auto_enter_active: msg.auto_enter_active,
@@ -162,9 +268,9 @@ function handleBackendMessage(msg: any) {
 function insertText(text: string) {
     const config = vscode.workspace.getConfiguration('alpencode');
     const autoEnter = config.get<boolean>('autoEnter', false);
-    
+
     if (text && text.length > 0) {
-        
+
         const textToType = text + (autoEnter ? "" : " ");
         backend.send(`type_text ${textToType}`);
 

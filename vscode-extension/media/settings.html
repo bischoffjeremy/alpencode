@@ -110,6 +110,15 @@
         </div>
     </div>
 
+    <div class="card">
+        <h2>🔧 Installation zurücksetzen</h2>
+        <p class="desc">Setzt die Installation zurück: Löscht die lokale Python-Umgebung, alle heruntergeladenen Modelle, sowie gespeicherte Einstellungen und Aufnahmen, und installiert alles neu.</p>
+        <div style="display:flex; gap:10px;">
+            <button id="reset-install-btn" class="btn-toggle" style="background: var(--danger-color); color: white; flex:1;" onclick="resetInstall()">Installation zurücksetzen (Neu installieren)</button>
+            <button id="uninstall-btn" class="btn-toggle" style="background: #a00; color: white; flex:1;" onclick="uninstallAlpencode()">Deinstallieren (Alles löschen)</button>
+        </div>
+    </div>
+
     <script>
         const vscode = acquireVsCodeApi();
         
@@ -234,6 +243,16 @@
                 isMonitoring = true;
             }
         }
+        function resetInstall() {
+            // Tell extension to run resetInstall; it will confirm and then do uninstall+reinstall.
+            vscode.postMessage({ command: 'resetInstall' });
+        }
+
+        function uninstallAlpencode() {
+            // Tell extension to run uninstall; it will ask for confirmation and then delete everything.
+            vscode.postMessage({ command: 'uninstall' });
+        }
+
         function refreshDevices() { vscode.postMessage({ command: 'refreshDevices' }); }
 
         refreshDevices();

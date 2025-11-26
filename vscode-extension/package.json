@@ -2,7 +2,7 @@
   "name": "alpencode",
   "displayName": "AlpenCode",
   "description": "Swiss German Voice-to-Code Dictation",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "icon": "cow.png",
   "publisher": "Bischoff-Ventures",
   "repository": {
@@ -17,8 +17,9 @@
   ],
   "activationEvents": [
     "onStartupFinished",
-    "onCommand:alpencode.start",
-    "onCommand:alpencode.settings"
+  "onCommand:alpencode.start",
+  "onCommand:alpencode.settings",
+  "onCommand:alpencode.resetInstall"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -46,6 +47,11 @@
       {
         "command": "alpencode.resetEnv",
         "title": "AlpenCode: Reset Environment"
+      }
+      ,
+      {
+        "command": "alpencode.resetInstall",
+        "title": "AlpenCode: Reset Installation (full)"
       }
     ],
     "configuration": {

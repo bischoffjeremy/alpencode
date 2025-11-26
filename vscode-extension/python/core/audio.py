@@ -5,9 +5,31 @@ import json
 import sys
 import queue
 import time
+from ctypes import *
+from contextlib import contextmanager
+
+# --- LINUX ALSA ERROR SUPPRESSION ---
+# Dies verhindert, dass C-Level Warnungen (JACK/ALSA) den Prozess crashen
+ERROR_HANDLER_FUNC = CFUNCTYPE(None, c_char_p, c_int, c_char_p, c_int, c_char_p)
+
+def py_error_handler(filename, line, function, err, fmt):
+    pass
+
+c_error_handler = ERROR_HANDLER_FUNC(py_error_handler)
+
+@contextmanager
+def no_alsa_error():
+    try:
+        asound = cdll.LoadLibrary('libasound.so')
+        asound.snd_lib_error_set_handler(c_error_handler)
+        yield
+        asound.snd_lib_error_set_handler(None)
+    except:
+        yield
+# ------------------------------------
 
 class AudioEngine:
-    RATE = 48000
+    RATE = 16000  # Whisper arbeitet meist besser mit 16k, 48k geht aber auch (wird resampled)
     CHUNK = 4096
     MAX_DURATION = 60 
 
@@ -20,8 +42,8 @@ class AudioEngine:
         self.lock = threading.Lock()
         self.audio_queue = queue.Queue()
         
-        self.silence_counter = 0      # Für Streaming Schnitt (kurz)
-        self.auto_stop_counter = 0    # Für Auto Stop (lang/absolut)
+        self.silence_counter = 0
+        self.auto_stop_counter = 0
         
         self.speech_detected = False
         self.streaming_mode = False
@@ -29,7 +51,10 @@ class AudioEngine:
         self.stop_pause_chunks = 0
 
     def _ensure_pyaudio(self):
-        if self.p is None: self.p = pyaudio.PyAudio()
+        if self.p is None: 
+            # WICHTIG: Hier umwickeln wir das Init mit dem Error-Suppressor
+            with no_alsa_error():
+                self.p = pyaudio.PyAudio()
 
     def list_devices(self):
         self._ensure_pyaudio()
@@ -52,7 +77,6 @@ class AudioEngine:
         self.recording = True
         self.monitoring = False
         
-        # RESET ALL COUNTERS
         self.silence_counter = 0
         self.auto_stop_counter = 0
         self.speech_detected = False 
@@ -62,7 +86,6 @@ class AudioEngine:
         self.cut_pause_chunks = int(chunks_per_sec * (float(stream_pause_ms) / 1000.0))
         self.stop_pause_chunks = int(chunks_per_sec * float(stop_pause_s))
         
-        # INFO LOG
         print(json.dumps({"type": "status", "message": f"Audio Config: Thresh={silence_threshold}, AutoStop={self.stop_pause_chunks} chunks"}), flush=True)
         
         with self.audio_queue.mutex:
@@ -98,56 +121,42 @@ class AudioEngine:
                     self.frames.append(data)
                     rms = self.calculate_rms(data)
 
-                    # --- LOGGING (Jede Sekunde) ---
                     log_timer += 1
-                    if log_timer % int(chunks_per_sec) == 0:
+                    # Logge seltener (z.B. alle 0.5 Sekunden), um stdout nicht zu fluten
+                    if log_timer % int(chunks_per_sec / 2) == 0:
                          silence_sec = self.auto_stop_counter / chunks_per_sec
-                         print(json.dumps({
-                             "type": "status", 
-                             "message": f"🎤 Level: {rms:.2f} | Thresh: {threshold} | AutoStop-Counter: {silence_sec:.1f}s"
-                         }), flush=True)
+                         # Optional: Log hier auskommentieren, wenn es im VS Code Output nervt
+                         # print(json.dumps({"type": "status", "message": f"Mic Level: {rms:.2f}"}), flush=True)
 
-                    # --- VAD & COUNTER LOGIK ---
-                    
                     if rms > threshold:
-                        # --- ES IST LAUT ---
                         self.speech_detected = True
-                        self.silence_counter = 0     # Reset Schnitt Timer
-                        self.auto_stop_counter = 0   # Reset Stop Timer
+                        self.silence_counter = 0     
+                        self.auto_stop_counter = 0   
                     else:
-                        # --- ES IST LEISE ---
-                        self.auto_stop_counter += 1  # Zählt IMMER hoch wenn leise (WICHTIG!)
+                        self.auto_stop_counter += 1  
 
                         if self.speech_detected:
-                            self.silence_counter += 1 # Zählt nur hoch, wenn wir mitten im Satz sind
+                            self.silence_counter += 1 
                         else:
                             if len(self.frames) > 15: self.frames.pop(0)
                             self.silence_counter = 0
 
-                    # --- ENTSCHEIDUNGEN ---
-                    
-                    # 1. AUTO STOP (Hat Priorität, greift auch wenn speech_detected False ist, solange es still ist)
                     if self.streaming_mode and self.auto_stop_counter > self.stop_pause_chunks:
-                        print(json.dumps({"type": "status", "message": "🛑 AUTO-STOP TRIGGERED (Silence Limit Reached)"}), flush=True)
-                        
+                        print(json.dumps({"type": "status", "message": "🛑 AUTO-STOP (Silence)"}), flush=True)
                         self.audio_queue.put(b''.join(self.frames))
                         self.audio_queue.put("CMD_STOP")
                         self.recording = False
                         break
 
-                    # 2. STREAMING SCHNITT (Nur wenn wir gerade sprechen)
                     if self.streaming_mode and self.speech_detected and (self.silence_counter > self.cut_pause_chunks):
                         cut_idx = len(self.frames) - int(self.cut_pause_chunks / 2)
                         if cut_idx > 0:
                             chunk = b''.join(self.frames[:cut_idx])
                             self.audio_queue.put(chunk)
-                            # Reset Frames und Speech detected -> Das hat vorher den Auto-Stop gekillt
                             self.frames = self.frames[cut_idx:]
                             self.silence_counter = 0
                             self.speech_detected = False 
-                            # ABER: auto_stop_counter läuft weiter, da es ja leise ist!
 
-                    # Notbremse (Hard Limit)
                     if len(self.frames) > chunks_max:
                         self.audio_queue.put(b''.join(self.frames))
                         self.frames = []
@@ -174,7 +183,26 @@ class AudioEngine:
 
     def _start_stream(self, idx, target):
         with self.lock:
-            self.stream = self.p.open(format=pyaudio.paInt16, channels=1, rate=self.RATE, input=True, input_device_index=idx, frames_per_buffer=self.CHUNK)
+            # Fallback für falsche Device ID: Wenn idx ungültig ist, nimm None (Standardgerät)
+            safe_idx = idx
+            try:
+                # Prüfen ob Device existiert, sonst None nehmen
+                if idx is not None:
+                     self.p.get_device_info_by_index(idx)
+            except:
+                print(json.dumps({"type": "status", "message": f"Device {idx} not found, using Default."}), flush=True)
+                safe_idx = None
+
+            # Hier ebenfalls mit error suppression, da open() auch feuern kann
+            with no_alsa_error():
+                self.stream = self.p.open(
+                    format=pyaudio.paInt16, 
+                    channels=1, 
+                    rate=self.RATE, 
+                    input=True, 
+                    input_device_index=safe_idx, 
+                    frames_per_buffer=self.CHUNK
+                )
         threading.Thread(target=target, daemon=True).start()
 
     def _stop_stream(self):
@@ -197,6 +225,14 @@ class AudioEngine:
     def calculate_rms(raw):
         try:
             data = np.frombuffer(raw, dtype=np.int16)
-            rms = np.sqrt(np.mean(data.astype(float)**2)) / 32768 * 100
-            return 0.0 if np.isnan(rms) else round(float(rms), 2)
+            # Schutz gegen leere Arrays
+            if len(data) == 0: return 0.0
+            
+            # Formel leicht angepasst für bessere Sensitivität
+            rms = np.sqrt(np.mean(data.astype(float)**2))
+            
+            # Normalisierung auf einen 0-100 Skala Wert (ungefähr)
+            # Max 16bit int ist 32768
+            normalized = (rms / 32768.0) * 1000.0 
+            return 0.0 if np.isnan(normalized) else round(float(normalized), 2)
         except: return 0.0
