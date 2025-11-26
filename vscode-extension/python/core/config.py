@@ -1,24 +1,31 @@
 import json
 import os
 import platform
+import tempfile
 from pathlib import Path
 import sys
 
 class ConfigManager:
-    # HIER WAREN DIE WERTE FEHLEND!
+    # 1. Temporäres Verzeichnis für Aufnahmen (wird bei Deinstall gelöscht)
+    TEMP_DIR = Path(tempfile.gettempdir())
+    
     DEFAULT_CONFIG = {
         "device_index": 0,
-        "save_folder": str(Path.home() / "AlpenCode_Recordings"),
+        # Standard: Aufnahmen im Temp-Ordner speichern
+        "save_folder": str(TEMP_DIR / "AlpenCode_Recordings"),
         "model_id": "Flurin17/whisper-large-v3-turbo-swiss-german",
         "silence_threshold": 5,
-        "streaming_active": False,      # Live-Streaming
-        "auto_enter_active": True,     # Auto Enter
-        "stream_pause": 650,            # ms zwischen Wörtern
-        "auto_stop_delay": 15.0          # s bis Auto-Stop
-    }   
+        "streaming_active": False,      
+        "auto_enter_active": True,      
+        "stream_pause": 650,            
+        "auto_stop_delay": 15.0         
+    }    
 
     @staticmethod
     def get_config_dir():
+        # 2. Permanenter Config-Ordner (wird bei Deinstall AUCH gelöscht)
+        # Windows: %APPDATA%\AlpenCode
+        # Mac/Linux: ~/.config/alpencode
         if platform.system() == "Windows":
             return Path(os.environ.get('APPDATA', Path.home())) / "AlpenCode"
         else:
@@ -39,14 +46,25 @@ class ConfigManager:
                 print(json.dumps({"type": "error", "message": f"Config Load Error: {e}"}))
                 return self.DEFAULT_CONFIG.copy()
         
+        # Erstelle Config, falls nicht vorhanden
         self.save(self.DEFAULT_CONFIG)
         return self.DEFAULT_CONFIG.copy()
 
     def save(self, new_config):
         config_dir = self.get_config_dir()
+        # Config Ordner erstellen (permanent)
         config_dir.mkdir(parents=True, exist_ok=True)
         config_file = config_dir / "config.json"
         
+        # Sicherstellen, dass der Temp-Ordner für Aufnahmen existiert
+        # (Falls er vom System aufgeräumt wurde)
+        save_folder = Path(new_config.get("save_folder", self.DEFAULT_CONFIG["save_folder"]))
+        try:
+            if not save_folder.exists():
+                save_folder.mkdir(parents=True, exist_ok=True)
+        except:
+            pass 
+
         try:
             current_data = {}
             if config_file.exists():

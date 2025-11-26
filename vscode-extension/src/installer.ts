@@ -88,23 +88,35 @@ function runCommand(command: string, args: string[], cwd: string, outputChannel:
     });
 }
 
-// NOTE: We intentionally do not provide a separate runRemoveCommand helper; deletions
-// are done inline using runCommand so the caller controls behavior and logging.
-
+// --------------------------------------------------------------------------------
+// RESET FUNCTION
+// --------------------------------------------------------------------------------
 export async function resetInstallation(context: vscode.ExtensionContext, outputChannel: vscode.OutputChannel): Promise<boolean> {
-    const msg = "Reset AlpenCode installation? This will remove the virtual environment (venv), downloaded model caches (HuggingFace/Torch), and saved settings & recordings. This operation will reinstall the environment afterwards.";
+    const msg = "Reset AlpenCode? This removes the venv, models, PERMANENT settings (Config) and TEMP recordings.";
     const choice = await vscode.window.showWarningMessage(msg, 'Reset Installation', 'Reset', 'Cancel');
     if (choice === 'Cancel' || !choice) return false;
 
     const venvPath = path.join(context.extensionPath, 'venv');
     const homedir = os.homedir();
+    const tempDir = os.tmpdir();
+
+    // Cache Pfade (für torch/huggingface)
     const hfCache = process.env['HF_HOME'] || path.join(homedir, '.cache', 'huggingface');
     const hfHubCache = process.env['HF_HUB_CACHE'] || process.env['HF_HUB_HOME'] || path.join(homedir, '.cache', 'huggingface', 'hub');
     const transformersCache = process.env['TRANSFORMERS_CACHE'] || path.join(homedir, '.cache', 'huggingface', 'transformers');
     const torchCache = process.env['TORCH_HOME'] || path.join(homedir, '.cache', 'torch');
-    const configDir = process.platform === 'win32' ? (process.env['APPDATA'] || path.join(homedir, 'AppData', 'Roaming')) : path.join(homedir, '.config', 'swiss_whisper');
+    
+    // 1. PERMANENTE CONFIG (Muss gelöscht werden)
+    // Logik muss exakt zum Python Skript passen!
+    const configDir = process.platform === 'win32' 
+        ? path.join(process.env['APPDATA'] || path.join(homedir, 'AppData', 'Roaming'), 'AlpenCode')
+        : path.join(homedir, '.config', 'alpencode');
+
+    // 2. TEMPORÄRE AUFNAHMEN (Müssen gelöscht werden)
+    const tempRecordingsDir = path.join(tempDir, 'AlpenCode_Recordings');
 
     try {
+        // VENV löschen
         if (fs.existsSync(venvPath)) {
             outputChannel.appendLine(`Removing venv: ${venvPath}`);
             try {
@@ -114,68 +126,31 @@ export async function resetInstallation(context: vscode.ExtensionContext, output
                     await runCommand('rm', ['-rf', venvPath], context.extensionPath, outputChannel);
                 }
             } catch (e) {
-                outputChannel.appendLine(`Failed to remove venv with runCommand: ${e}`);
+                outputChannel.appendLine(`Failed to remove venv: ${e}`);
             }
         }
 
-        // Always delete caches/config when resetting
+        // Caches, Config und Temp Recordings löschen
         if (true) {
-            const hfArrays = [hfCache, hfHubCache, transformersCache];
-            for (const hfItem of hfArrays) {
-                if (fs.existsSync(hfItem)) {
-                    outputChannel.appendLine(`Removing HuggingFace item: ${hfItem}`);
+            const dirsToDelete = [hfCache, hfHubCache, transformersCache, torchCache, configDir, tempRecordingsDir];
+            
+            for (const dir of dirsToDelete) {
+                if (fs.existsSync(dir)) {
+                    outputChannel.appendLine(`Removing directory: ${dir}`);
                     try {
                         if (process.platform === 'win32') {
-                            await runCommand('powershell', ['-NoProfile', '-Command', `Remove-Item -Recurse -Force -LiteralPath "${hfItem}"`], homedir, outputChannel);
+                            await runCommand('powershell', ['-NoProfile', '-Command', `Remove-Item -Recurse -Force -LiteralPath "${dir}"`], homedir, outputChannel);
                         } else {
-                            await runCommand('rm', ['-rf', hfItem], homedir, outputChannel);
+                            await runCommand('rm', ['-rf', dir], homedir, outputChannel);
                         }
                     } catch (e) {
-                        outputChannel.appendLine(`Failed to remove ${hfItem} with runCommand: ${e}`);
+                        outputChannel.appendLine(`Failed to remove ${dir}: ${e}`);
                     }
                 }
-            }
-            if (fs.existsSync(torchCache)) {
-                outputChannel.appendLine(`Removing Torch cache: ${torchCache}`);
-                try {
-                    if (process.platform === 'win32') {
-                        await runCommand('powershell', ['-NoProfile', '-Command', `Remove-Item -Recurse -Force -LiteralPath "${torchCache}"`], homedir, outputChannel);
-                    } else {
-                        await runCommand('rm', ['-rf', torchCache], homedir, outputChannel);
-                    }
-                } catch (e) {
-                    outputChannel.appendLine(`Failed to remove torchCache with runCommand: ${e}`);
-                }
-            }
-            if (fs.existsSync(configDir)) {
-                outputChannel.appendLine(`Removing config dir: ${configDir}`);
-                try {
-                    if (process.platform === 'win32') {
-                        await runCommand('powershell', ['-NoProfile', '-Command', `Remove-Item -Recurse -Force -LiteralPath "${configDir}"`], homedir, outputChannel);
-                    } else {
-                        await runCommand('rm', ['-rf', configDir], homedir, outputChannel);
-                    }
-                } catch (e) {
-                    outputChannel.appendLine(`Failed to remove configDir with runCommand: ${e}`);
-                }
-            }
-            // Also remove recorded audio folder if used
-            const defaultSaveFolder = path.join(homedir, 'SwissWhisper_Aufnahmen');
-            try {
-                if (fs.existsSync(defaultSaveFolder)) {
-                    outputChannel.appendLine(`Removing saved recordings folder: ${defaultSaveFolder}`);
-                    if (process.platform === 'win32') {
-                        await runCommand('powershell', ['-NoProfile', '-Command', `Remove-Item -Recurse -Force -LiteralPath "${defaultSaveFolder}"`], homedir, outputChannel);
-                    } else {
-                        await runCommand('rm', ['-rf', defaultSaveFolder], homedir, outputChannel);
-                    }
-                }
-            } catch (e) {
-                outputChannel.appendLine(`Failed to remove saved recordings folder: ${e}`);
             }
         }
 
-        outputChannel.appendLine('AlpenCode Installation Reset performed.');
+        outputChannel.appendLine('AlpenCode Reset complete. Config & Recordings deleted.');
         return true;
     } catch (e) {
         outputChannel.appendLine(`Reset failed: ${e}`);
@@ -184,16 +159,28 @@ export async function resetInstallation(context: vscode.ExtensionContext, output
     }
 }
 
+// --------------------------------------------------------------------------------
+// UNINSTALL FUNCTION
+// --------------------------------------------------------------------------------
 export async function uninstallAlpenCode(context: vscode.ExtensionContext, outputChannel: vscode.OutputChannel): Promise<boolean> {
-    const msg = "Uninstall AlpenCode? This will remove the virtual environment (venv), downloaded model caches and settings & recordings. This is permanent.";
+    const msg = "Uninstall AlpenCode? This permanently removes models, config settings, and recordings.";
     const choice = await vscode.window.showWarningMessage(msg, 'Uninstall', 'Cancel');
     if (choice === 'Cancel' || !choice) return false;
 
     const venvPath = path.join(context.extensionPath, 'venv');
     const homedir = os.homedir();
+    const tempDir = os.tmpdir();
+
     const hfCache = process.env['HF_HOME'] || path.join(homedir, '.cache', 'huggingface');
     const torchCache = process.env['TORCH_HOME'] || path.join(homedir, '.cache', 'torch');
-    const configDir = process.platform === 'win32' ? (process.env['APPDATA'] || path.join(homedir, 'AppData', 'Roaming')) : path.join(homedir, '.config', 'swiss_whisper');
+    
+    // 1. PERMANENTE CONFIG
+    const configDir = process.platform === 'win32' 
+        ? path.join(process.env['APPDATA'] || path.join(homedir, 'AppData', 'Roaming'), 'AlpenCode')
+        : path.join(homedir, '.config', 'alpencode');
+
+    // 2. TEMPORÄRE AUFNAHMEN
+    const tempRecordingsDir = path.join(tempDir, 'AlpenCode_Recordings');
 
     try {
         if (fs.existsSync(venvPath)) {
@@ -205,64 +192,29 @@ export async function uninstallAlpenCode(context: vscode.ExtensionContext, outpu
                     await runCommand('rm', ['-rf', venvPath], context.extensionPath, outputChannel);
                 }
             } catch (e) {
-                outputChannel.appendLine(`Uninstall failed to remove venv with runCommand: ${e}`);
+                outputChannel.appendLine(`Uninstall failed to remove venv: ${e}`);
             }
         }
 
-        // Delete caches & config & saved recordings as part of uninstall
-        if (fs.existsSync(hfCache)) {
-            outputChannel.appendLine(`Uninstall: Removing HuggingFace cache: ${hfCache}`);
-                outputChannel.appendLine(`Uninstall: Removing HuggingFace cache: ${hfCache}`);
-                try {
-                    if (process.platform === 'win32') {
-                        await runCommand('powershell', ['-NoProfile', '-Command', `Remove-Item -Recurse -Force -LiteralPath "${hfCache}"`], homedir, outputChannel);
-                    } else {
-                        await runCommand('rm', ['-rf', hfCache], homedir, outputChannel);
-                    }
-                } catch (e) {
-                    outputChannel.appendLine(`Uninstall failed to remove hfCache with runCommand: ${e}`);
-                }
-            }
-        if (fs.existsSync(torchCache)) {
-                outputChannel.appendLine(`Uninstall: Removing Torch cache: ${torchCache}`);
-                try {
-                    if (process.platform === 'win32') {
-                        await runCommand('powershell', ['-NoProfile', '-Command', `Remove-Item -Recurse -Force -LiteralPath "${torchCache}"`], homedir, outputChannel);
-                    } else {
-                        await runCommand('rm', ['-rf', torchCache], homedir, outputChannel);
-                    }
-                } catch (e) {
-                    outputChannel.appendLine(`Uninstall failed to remove torchCache with runCommand: ${e}`);
-                }
-            }
-        if (fs.existsSync(configDir)) {
-                outputChannel.appendLine(`Uninstall: Removing config dir: ${configDir}`);
-                try {
-                    if (process.platform === 'win32') {
-                        await runCommand('powershell', ['-NoProfile', '-Command', `Remove-Item -Recurse -Force -LiteralPath "${configDir}"`], homedir, outputChannel);
-                    } else {
-                        await runCommand('rm', ['-rf', configDir], homedir, outputChannel);
-                    }
-                } catch (e) {
-                    outputChannel.appendLine(`Uninstall failed to remove configDir with runCommand: ${e}`);
-                }
-        }
-        // Also remove default recordings folder
-        const defaultSaveFolder = path.join(homedir, 'SwissWhisper_Aufnahmen');
-        if (fs.existsSync(defaultSaveFolder)) {
-            outputChannel.appendLine(`Uninstall: Removing saved recordings folder: ${defaultSaveFolder}`);
-            try {
-                if (process.platform === 'win32') {
-                    await runCommand('powershell', ['-NoProfile', '-Command', `Remove-Item -Recurse -Force -LiteralPath "${defaultSaveFolder}"`], homedir, outputChannel);
-                } else {
-                    await runCommand('rm', ['-rf', defaultSaveFolder], homedir, outputChannel);
-                }
-            } catch (e) {
-                outputChannel.appendLine(`Uninstall failed to remove saved recordings: ${e}`);
-            }
-    }
+        // Alle Ordner sammeln und löschen
+        const dirsToDelete = [hfCache, torchCache, configDir, tempRecordingsDir];
 
-    outputChannel.appendLine('AlpenCode Uninstall performed.');
+        for (const dir of dirsToDelete) {
+            if (fs.existsSync(dir)) {
+                outputChannel.appendLine(`Uninstall: Removing: ${dir}`);
+                try {
+                    if (process.platform === 'win32') {
+                        await runCommand('powershell', ['-NoProfile', '-Command', `Remove-Item -Recurse -Force -LiteralPath "${dir}"`], homedir, outputChannel);
+                    } else {
+                        await runCommand('rm', ['-rf', dir], homedir, outputChannel);
+                    }
+                } catch (e) {
+                    outputChannel.appendLine(`Uninstall failed to remove ${dir}: ${e}`);
+                }
+            }
+        }
+
+        outputChannel.appendLine('AlpenCode Uninstall complete.');
         return true;
     } catch (e) {
         outputChannel.appendLine(`Uninstall failed: ${e}`);
