@@ -1,0 +1,6 @@
+transformers==4.35.2
+pyaudio==0.2.14
+scipy==1.11.4
+numpy==1.26.2
+accelerate==0.25.0
+pyautogui==0.9.53

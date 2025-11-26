@@ -1,0 +1,42 @@
+[project]
+name = "alpencode"
+version = "1.0.0"
+description = "AlpenCode - Swiss German voice-to-code dictation using Whisper AI"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    {name = "Jeremy"}
+]
+
+dependencies = [
+    "torch>=2.0.0",
+    "torchaudio>=2.0.0",
+    "transformers>=4.30.0",
+    "pyaudio>=0.2.13",
+    "pynput>=1.7.6",
+    "pyautogui>=0.9.54",
+    "pyperclip>=1.8.2",
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "accelerate>=0.20.0",
+]
+
+[project.optional-dependencies]
+windows = [
+    "win10toast>=0.9",
+    "pycaw>=20240210"
+]
+
+[project.scripts]
+alpencode = "whisper_dictation:main"
+ispy = "whisper_dictation:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]

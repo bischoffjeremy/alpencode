@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        :root {
+            --active-color: #00ff00;
+            --danger-color: #ff4444;
+            --suggest-color: #ffaa00; 
+            --grid-color: #333;
+        }
+        body { font-family: var(--vscode-font-family); padding: 20px; color: var(--vscode-foreground); max-width: 600px; margin: 0 auto; }
+        
+        .card { 
+            background: var(--vscode-editor-background); 
+            border: 1px solid var(--vscode-focusBorder); 
+            padding: 20px; margin-bottom: 20px; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+
+        h2 { margin-top: 0; display: flex; align-items: center; gap: 10px; font-size: 1.1em; }
+        p.desc { font-size: 0.9em; color: var(--vscode-descriptionForeground); margin-bottom: 15px; line-height: 1.4; }
+        select { background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground); border: 1px solid var(--vscode-dropdown-border); padding: 8px; width: 100%; margin-bottom: 10px; }
+
+        /* VISUALIZER */
+        .viz-header { display: flex; justify-content: space-between; font-family: monospace; font-size: 0.9em; margin-bottom: 5px; color: #888; }
+        .viz-wrapper { position: relative; margin: 10px 0 20px 0; padding-top: 30px; }
+        #viz-container { height: 45px; background: #000; border-radius: 4px; position: relative; overflow: hidden; border: 1px solid #444; background-image: linear-gradient(90deg, transparent 98%, var(--grid-color) 98%); background-size: 25% 100%; }
+        #level-fill { height: 100%; width: 0%; background: var(--active-color); transition: width 0.05s ease-out; box-shadow: 0 0 10px var(--active-color); opacity: 0.8; }
+        #threshold-marker { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--danger-color); z-index: 20; box-shadow: 0 0 5px var(--danger-color); transition: left 0.05s; }
+        #suggestion-marker { position: absolute; top: 0; bottom: 0; width: 4px; background: var(--suggest-color); z-index: 10; opacity: 0; transition: left 0.5s ease-out, opacity 0.3s; border-radius: 2px; box-shadow: 0 0 8px var(--suggest-color); }
+        .marker-label { position: absolute; top: -28px; transform: translateX(-50%); font-size: 0.85em; font-weight: bold; padding: 2px 6px; border-radius: 3px; min-width: 40px; text-align: center; }
+        #threshold-value-display { color: var(--danger-color); border: 1px solid var(--danger-color); background: var(--vscode-editor-background); z-index: 20; }
+        #suggestion-value-display { color: var(--vscode-editor-background); background: var(--suggest-color); z-index: 10; top: -28px; opacity: 0; transition: opacity 0.3s; }
+        #suggestion-value-display::after { content: " Ø"; font-size: 0.8em; opacity: 0.7; }
+
+        /* CONTROLS */
+        .btn-toggle { display: flex; align-items: center; gap: 8px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; padding: 10px 20px; cursor: pointer; border-radius: 4px; font-weight: bold; width: 100%; justify-content: center; font-size: 1em; }
+        .btn-toggle:hover { background: var(--vscode-button-hoverBackground); }
+        .btn-toggle.recording { background: var(--danger-color); color: white; }
+
+        .switch-label { display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; margin-top: 10px;}
+        #current-val-display { color: var(--active-color); font-weight: bold; }
+        input[type=range] { width: 100%; cursor: pointer; margin-top: 10px;}
+        .zoom-info { font-size: 0.75em; color: #666; text-align: center; margin-top: 5px; }
+
+        /* LOGIC HELPERS */
+        .disabled-section { opacity: 0.4; pointer-events: none; filter: grayscale(100%); transition: opacity 0.3s; }
+        .val-display { float: right; font-weight: bold; color: var(--active-color); font-family: monospace; }
+    </style>
+</head>
+<body>
+    <h1>🇨🇭 AlpenCode Settings</h1>
+
+    <div class="card">
+        <h2>🎤 Mikrofon</h2>
+        <select id="device-select" onchange="updateConfig('device_index', this.value)">
+            <option>Lade Geräte...</option>
+        </select>
+        <button class="btn-toggle" style="background: transparent; border: 1px solid #555; padding: 5px; font-size: 0.8em;" onclick="refreshDevices()">🔄 Liste aktualisieren</button>
+    </div>
+
+    <div class="card">
+        <h2>🎚️ Pegel & Kalibrierung</h2>
+        <p class="desc">Schiebe den roten Regler links von den Ausschlag.</p>
+
+        <div class="viz-header"><span>0.0</span><span>Live: <span id="current-val-display">0.00</span></span><span>20.0</span></div>
+
+        <div class="viz-wrapper">
+            <div id="suggestion-marker" style="left: 0%;"><div id="suggestion-value-display" class="marker-label">0.0</div></div>
+            <div id="threshold-marker" style="left: 10%;"><div id="threshold-value-display" class="marker-label">1.0</div></div>
+            <div id="viz-container"><div id="level-fill"></div></div>
+        </div>
+
+        <input type="range" id="threshold-slider" min="0.1" max="20.0" step="0.1" value="1.0" oninput="updateConfig('silence_threshold', this.value)">
+        
+        <div class="zoom-info">Range (0.1 - 20.0)</div>
+        <br>
+        <button id="monitor-btn" class="btn-toggle" onclick="toggleMonitor()">
+            <span id="monitor-icon">🔴</span> <span id="monitor-text">Test Starten</span>
+        </button>
+        <p id="status-text" style="text-align: center; margin-top: 10px; font-weight: bold; color: #666;">Lade...</p>
+    </div>
+
+    <div class="card">
+        <h2>⌨️ Verhalten</h2>
+        <label class="switch-label">
+            <input type="checkbox" id="auto-enter-check" onchange="updateConfig('auto_enter_active', String(this.checked))">
+            <span><strong>Auto Enter senden</strong> (Immer am Ende)</span>
+        </label>
+    </div>
+
+    <div class="card">
+        <h2>📡 Streaming & Auto-Stop</h2>
+        <label class="switch-label">
+            <input type="checkbox" id="streaming-check" onchange="updateConfig('streaming_active', String(this.checked)); toggleStreaming(this.checked)">
+            <span><strong>Live Streaming aktivieren</strong></span>
+        </label>
+        <p class="desc" style="margin-top:10px; margin-bottom:20px;">Text erscheint live während du sprichst.</p>
+
+        <div id="streaming-options" class="disabled-section" style="border-left: 2px solid #444; padding-left: 15px;">
+            <p class="desc" style="margin-bottom:0;"><strong>✂️ Schnitt-Pause (Senden):</strong></p>
+            <input type="range" id="stream-pause-slider" min="50" max="2000" step="100" oninput="updateConfig('stream_pause', this.value)">
+            <span id="stream-pause-val" class="val-display">500ms</span>
+            <div style="clear:both; margin-bottom: 20px;"></div>
+
+            <p class="desc" style="margin-bottom:0; color:var(--danger-color);"><strong>🛑 Auto-Stop (Ende):</strong></p>
+            <input type="range" id="auto-stop-slider" min="1.5" max="20.0" step="0.5" oninput="updateConfig('auto_stop_delay', this.value)">
+            <span id="auto-stop-val" class="val-display">15.0s</span>
+            <div style="clear:both;"></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>🔧 Installation zurücksetzen</h2>
+        <p class="desc">Setzt die Installation zurück: Löscht die lokale Python-Umgebung, alle heruntergeladenen Modelle, sowie gespeicherte Einstellungen und Aufnahmen, und installiert alles neu.</p>
+        <div style="display:flex; gap:10px;">
+            <button id="reset-install-btn" class="btn-toggle" style="background: var(--danger-color); color: white; flex:1;" onclick="resetInstall()">Installation zurücksetzen (Neu installieren)</button>
+            <button id="uninstall-btn" class="btn-toggle" style="background: #a00; color: white; flex:1;" onclick="uninstallAlpencode()">Deinstallieren (Alles löschen)</button>
+        </div>
+    </div>
+
+    <script>
+        const vscode = acquireVsCodeApi();
+        
+        const fill = document.getElementById('level-fill');
+        const thresholdMarker = document.getElementById('threshold-marker');
+        const thresholdLabel = document.getElementById('threshold-value-display');
+        const suggestMarker = document.getElementById('suggestion-marker');
+        const suggestLabel = document.getElementById('suggestion-value-display');
+        const currentValDisplay = document.getElementById('current-val-display');
+        const statusText = document.getElementById('status-text');
+        const monitorBtn = document.getElementById('monitor-btn');
+        const slider = document.getElementById('threshold-slider');
+        
+        const elStreamingCheck = document.getElementById('streaming-check');
+        const elStreamingOptions = document.getElementById('streaming-options');
+        const elStreamPauseSlider = document.getElementById('stream-pause-slider');
+        const elStreamPauseVal = document.getElementById('stream-pause-val');
+        const elAutoStopSlider = document.getElementById('auto-stop-slider');
+        const elAutoStopVal = document.getElementById('auto-stop-val');
+        const elAutoEnterCheck = document.getElementById('auto-enter-check');
+
+        let isMonitoring = false;
+        const VISUAL_MAX = 20.0;
+        let historyBuffer = [];
+        const BUFFER_SIZE = 50; 
+
+        function updateConfig(key, value) {
+            if (key === 'silence_threshold') updateMarkerPos(value);
+            if (key === 'stream_pause') elStreamPauseVal.innerText = value + 'ms';
+            if (key === 'auto_stop_delay') elAutoStopVal.innerText = value + 's';
+            
+            vscode.postMessage({ command: 'setConfigVal', key: key, value: String(value) });
+        }
+
+        function toggleStreaming(isActive) {
+            if (isActive) elStreamingOptions.classList.remove('disabled-section');
+            else elStreamingOptions.classList.add('disabled-section');
+        }
+
+        function updateMarkerPos(val) {
+            const pct = Math.min(Math.max((parseFloat(val) / VISUAL_MAX) * 100, 0), 100);
+            thresholdMarker.style.left = pct + '%';
+            thresholdLabel.innerText = parseFloat(val).toFixed(1);
+        }
+
+        // --- MESSAGE HANDLER ---
+        window.addEventListener('message', event => {
+            const msg = event.data;
+            const d = msg.data || msg;
+            
+            if (msg.type === 'init_settings' || msg.type === 'config_info') {
+                
+                // Visual Feedback (Debug)
+                statusText.innerText = `Config loaded: Enter=${d.auto_enter_active}`;
+                setTimeout(() => { if(!isMonitoring) statusText.innerText = "Bereit."; }, 3000);
+
+                const isEnter = (d.auto_enter_active === true || String(d.auto_enter_active) === "true");
+                elAutoEnterCheck.checked = isEnter;
+
+                const isStream = (d.streaming_active === true || String(d.streaming_active) === "true");
+                elStreamingCheck.checked = isStream;
+                toggleStreaming(isStream);
+
+                // 2. Sliders
+                if (d.threshold) { slider.value = d.threshold; updateMarkerPos(d.threshold); }
+                if (d.stream_pause) { elStreamPauseSlider.value = d.stream_pause; elStreamPauseVal.innerText = d.stream_pause + 'ms'; }
+                if (d.auto_stop_delay) { elAutoStopSlider.value = d.auto_stop_delay; elAutoStopVal.innerText = d.auto_stop_delay + 's'; }
+                
+                if (d.device !== undefined) { document.getElementById('device-select').value = d.device; window.savedDeviceIndex = d.device; }
+            }
+            else if (msg.type === 'devices') {
+                const select = document.getElementById('device-select');
+                select.innerHTML = '';
+                if (!d || d.length === 0) { const opt = document.createElement('option'); opt.text = "Keine Mikros"; select.appendChild(opt); return; }
+                d.forEach(dev => { const opt = document.createElement('option'); opt.value = dev.index; opt.text = dev.name; select.appendChild(opt); });
+                if (window.savedDeviceIndex !== undefined) select.value = window.savedDeviceIndex;
+            }
+            else if (msg.type === 'calibration_level') {
+                const rawVal = parseFloat(msg.data);
+                const threshRaw = parseFloat(slider.value);
+                currentValDisplay.innerText = rawVal.toFixed(2);
+                const pct = Math.min(Math.max((rawVal / VISUAL_MAX) * 100, 0), 100);
+                fill.style.width = pct + '%';
+                if (isMonitoring) addToHistory(rawVal);
+                if (rawVal >= threshRaw) { statusText.innerText = "AUFNAHME"; statusText.style.color = "#00ff00"; fill.style.backgroundColor = "#00ff00"; } 
+                else { statusText.innerText = "---"; statusText.style.color = "#888"; fill.style.backgroundColor = "#555"; }
+            }
+        });
+
+        // ---  LOGIC ---
+        function addToHistory(val) {
+            historyBuffer.push(val);
+            if (historyBuffer.length > BUFFER_SIZE) historyBuffer.shift();
+            calculateAverage();
+        }
+        function calculateAverage() {
+            if (historyBuffer.length < 5) return;
+            const activeValues = historyBuffer.filter(v => v > 0.1);
+            if (activeValues.length === 0) return;
+            const sum = activeValues.reduce((a, b) => a + b, 0);
+            const pct = Math.min(Math.max(((sum / activeValues.length) / VISUAL_MAX) * 100, 0), 100);
+            suggestMarker.style.opacity = '1'; suggestLabel.style.opacity = '1';
+            suggestMarker.style.left = pct + '%'; suggestLabel.innerText = (sum / activeValues.length).toFixed(1);
+        }
+        
+        function toggleMonitor() {
+            if (isMonitoring) {
+                vscode.postMessage({ command: 'stopMonitor' });
+                monitorBtn.classList.remove('recording');
+                document.getElementById('monitor-icon').innerText = '🔴';
+                document.getElementById('monitor-text').innerText = 'Test Starten';
+                statusText.innerText = "Gestoppt"; statusText.style.color = "#666";
+                fill.style.width = '0%'; currentValDisplay.innerText = "0.00";
+                historyBuffer = []; suggestMarker.style.opacity = '0'; suggestLabel.style.opacity = '0';
+                isMonitoring = false;
+            } else {
+                vscode.postMessage({ command: 'startMonitor' });
+                monitorBtn.classList.add('recording');
+                document.getElementById('monitor-icon').innerText = '⏹';
+                document.getElementById('monitor-text').innerText = 'Test Stoppen';
+                statusText.innerText = "Spreche jetzt...";
+                isMonitoring = true;
+            }
+        }
+        function resetInstall() {
+            // Tell extension to run resetInstall; it will confirm and then do uninstall+reinstall.
+            vscode.postMessage({ command: 'resetInstall' });
+        }
+
+        function uninstallAlpencode() {
+            // Tell extension to run uninstall; it will ask for confirmation and then delete everything.
+            vscode.postMessage({ command: 'uninstall' });
+        }
+
+        function refreshDevices() { vscode.postMessage({ command: 'refreshDevices' }); }
+
+        refreshDevices();
+        vscode.postMessage({ command: 'get_config' });
+    </script>
+</body>
+</html>
