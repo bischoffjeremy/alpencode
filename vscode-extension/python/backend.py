@@ -13,25 +13,20 @@ import json
 import subprocess
 from pathlib import Path
 import threading
-try:
-    import pyautogui
-    PYAUTOGUI_AVAILABLE = True
-except ImportError:
-    PYAUTOGUI_AVAILABLE = False
-
+import pyautogui
+from core.config import ConfigManager
 # Standard-Konfiguration
 RATE = 48000
 CHUNK = 4096
 MODEL_ID = "Flurin17/whisper-large-v3-turbo-swiss-german"
 
-# Globale Variablen
 recording = False
 monitoring = False
 frames = []
 stream = None
 p = pyaudio.PyAudio()
-device_index = None # Wird automatisch gewählt oder per Config gesetzt
-silence_threshold = 5 # Default
+device_index = None 
+silence_threshold = 5 
 audio_lock = threading.Lock()
 original_volume = None
 
@@ -117,25 +112,9 @@ def get_config_dir():
         return Path.home() / ".config" / "swiss_whisper"
 
 def load_config():
-    config_dir = get_config_dir()
-    config_file = config_dir / "config.json"
     
-    default_config = {
-        "device_index": None,
-        "save_folder": str(Path.home() / "SwissWhisper_Aufnahmen"),
-        "model_id": MODEL_ID,
-        "silence_threshold": 5
-    }
-    
-    if config_file.exists():
-        try:
-            with open(config_file, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-                return {**default_config, **config}
-        except:
-            pass
-    
-    return default_config
+    config_mgr = ConfigManager()
+    return config_mgr.load()
 
 def save_config(config):
     config_dir = get_config_dir()

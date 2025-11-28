@@ -39,25 +39,18 @@ class ConfigManager:
             try:
                 with open(config_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    merged = self.DEFAULT_CONFIG.copy()
-                    merged.update(data)
-                    return merged
+                    return data
             except Exception as e:
                 print(json.dumps({"type": "error", "message": f"Config Load Error: {e}"}))
                 return self.DEFAULT_CONFIG.copy()
         
-        # Erstelle Config, falls nicht vorhanden
-        self.save(self.DEFAULT_CONFIG)
         return self.DEFAULT_CONFIG.copy()
 
     def save(self, new_config):
         config_dir = self.get_config_dir()
-        # Config Ordner erstellen (permanent)
         config_dir.mkdir(parents=True, exist_ok=True)
         config_file = config_dir / "config.json"
         
-        # Sicherstellen, dass der Temp-Ordner für Aufnahmen existiert
-        # (Falls er vom System aufgeräumt wurde)
         save_folder = Path(new_config.get("save_folder", self.DEFAULT_CONFIG["save_folder"]))
         try:
             if not save_folder.exists():
